@@ -1,34 +1,40 @@
 package org.bytedeco.sbt.javacpp
 
-import scala.language.postfixOps
-import sbt._
+import org.bytedeco.javacpp.tools.Builder
 import sbt.Keys._
+import sbt._
 
+import scala.language.postfixOps
 import scala.util.Try
 
-object Plugin extends AutoPlugin {
+object JavaCppPlugin extends AutoPlugin {
 
   override def projectSettings: Seq[Setting[_]] = {
     import autoImport._
     Seq(
       autoCompilerPlugins := true,
       javaCppPlatform := Platform.current,
-      javaCppVersion := Versions.javaCppVersion,
       javaCppPresetLibs := Seq.empty,
       libraryDependencies += {
-        "org.bytedeco" % "javacpp" % javaCppVersion.value jar
+        "org.bytedeco" % "javacpp" % Versions.javaCppVersion jar
       },
-      javaCppPresetDependencies)
+      javaCppPresetDependencies,
+      javaCppBuild := javaCpp.value,
+      products in Compile := (products in Compile).dependsOn(javaCppBuild).value)
   }
 
   object Versions {
-    val javaCppVersion = "1.4.3"
+    val javaCppVersion = {
+      val javaCppJar = classOf[Builder].getProtectionDomain.getCodeSource.getLocation.getFile
+      "(?<=javacpp-)(.*)(?=\\.jar)".r.findFirstIn(javaCppJar).get
+    }
   }
 
   object autoImport {
     val javaCppPlatform = SettingKey[Seq[String]]("javaCppPlatform", """The platform that you want to compile for (defaults to the platform of the current computer). You can also set this via the "sbt.javacpp.platform" System Property """)
-    val javaCppVersion = SettingKey[String]("javaCppVersion", s"Version of Java CPP that you want to use, defaults to ${Versions.javaCppVersion}")
     val javaCppPresetLibs = SettingKey[Seq[(String, String)]]("javaCppPresetLibs", "List of additional JavaCPP presets that you would wish to bind lazily, defaults to an empty list")
+    val javaCppClasses = SettingKey[Seq[String]]("javaCppClasses", "A list of Java CPP classes. Suffix of '.*' ('.**') can be used to match all classes under the specified package (and any subpackages)")
+    val javaCppBuild = TaskKey[Seq[File]]("javaCppBuild", "Build Java CPP products")
   }
 
   override def requires: Plugins = plugins.JvmPlugin
@@ -38,7 +44,7 @@ object Plugin extends AutoPlugin {
   private def javaCppPresetDependencies: Def.Setting[Seq[ModuleID]] = {
     import autoImport._
     libraryDependencies ++= {
-      val cppPresetVersion = buildPresetVersion(javaCppVersion.value)
+      lazy val cppPresetVersion = buildPresetVersion(Versions.javaCppVersion)
       javaCppPresetLibs.value.flatMap {
         case (libName, libVersion) =>
           val generic = "org.bytedeco.javacpp-presets" % libName % s"$libVersion-$cppPresetVersion" classifier ""
@@ -71,4 +77,24 @@ object Plugin extends AutoPlugin {
       Try(arg.split('.').map(_.toInt).toList).toOption
   }
 
+  private def javaCpp = Def.task {
+    import autoImport._
+    val classes = javaCppClasses.value
+    val dependencies = (dependencyClasspath in Compile).value
+    val output = (classDirectory in Compile).value
+    val _ = (compile in Compile).value
+
+    val thread = Thread.currentThread()
+    val saved = thread.getContextClassLoader
+    thread.setContextClassLoader(classOf[Builder].getClassLoader)
+    try {
+      new Builder()
+        .classPaths(output.getAbsolutePath)
+        .classPaths(dependencies.map(_.data.absolutePath): _*)
+        .classesOrPackages(classes: _*)
+        .build()
+    } finally {
+      thread.setContextClassLoader(saved)
+    }
+  }
 }

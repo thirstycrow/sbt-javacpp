@@ -5,3 +5,5 @@
                                   |Specify this property using the scriptedLaunchOpts -D.""".stripMargin)
   else addSbtPlugin("org.bytedeco" % "sbt-javacpp" % pluginVersion)
 }
+
+libraryDependencies += "org.bytedeco" % "javacpp" % "1.5.1"

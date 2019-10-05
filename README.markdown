@@ -42,8 +42,8 @@ you can change the target platform for your build straight from your command lin
 sbt compile -Dsbt.javacpp.platform="android-arm android-x86"
 ```
 
-In case you want to select a different javacpp version:
+In case you want to select a different javacpp version, add the following line in your `project/plugins.sbt`:
 
 ```scala
-javaCppVersion := "1.4.3"
+libraryDependencies += "org.bytedeco" % "javacpp" % "1.5.1"
 ```

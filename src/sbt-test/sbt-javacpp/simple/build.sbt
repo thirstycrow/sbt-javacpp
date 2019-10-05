@@ -2,4 +2,6 @@ version := "0.1"
 
 scalaVersion := "2.11.12"
 
-libraryDependencies += "com.novocode" % "junit-interface" % "0.11" % "test"
+javaCppClasses := Seq("javacpp.*")
+
+libraryDependencies += "org.scalatest" %% "scalatest" % "3.0.8" % Test
