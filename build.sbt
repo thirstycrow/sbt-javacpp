@@ -23,8 +23,6 @@ publishArtifact in Test := false
 
 pomIncludeRepository := { _ => false }
 
-libraryDependencies += "org.bytedeco" % "javacpp" % "1.4.3"
-
 scalacOptions ++= Seq("-unchecked", "-deprecation", "-feature", "-Xlint", "-Xlog-free-terms")
 
 publishTo := {

@@ -1,10 +1,12 @@
 package org.bytedeco.sbt.javacpp
 
-import org.bytedeco.javacpp.tools.Builder
+import java.net.URLClassLoader
+import java.util.Properties
+
 import sbt.Keys._
 import sbt._
 
-import scala.language.postfixOps
+import scala.language.{ postfixOps, reflectiveCalls }
 import scala.util.Try
 
 object JavaCppPlugin extends AutoPlugin {
@@ -13,10 +15,13 @@ object JavaCppPlugin extends AutoPlugin {
     import autoImport._
     Seq(
       autoCompilerPlugins := true,
+      javaCppClasses := Seq.empty,
+      javaCppCustomizer := identity,
       javaCppPlatform := Platform.current,
       javaCppPresetLibs := Seq.empty,
+      javaCppVersion := Versions.javaCppVersion,
       libraryDependencies += {
-        "org.bytedeco" % "javacpp" % Versions.javaCppVersion jar
+        "org.bytedeco" % "javacpp" % javaCppVersion.value jar
       },
       javaCppPresetDependencies,
       javaCppBuild := javaCpp.value,
@@ -24,17 +29,48 @@ object JavaCppPlugin extends AutoPlugin {
   }
 
   object Versions {
-    val javaCppVersion = {
-      val javaCppJar = classOf[Builder].getProtectionDomain.getCodeSource.getLocation.getFile
-      "(?<=javacpp-)(.*)(?=\\.jar)".r.findFirstIn(javaCppJar).get
-    }
+    val javaCppVersion = "1.4.3"
   }
 
   object autoImport {
+    type JavaCppBuilder = {
+      def classPaths(classPath: String): this.type
+      def classPaths(classPath: Array[String]): this.type
+      def encoding(encoding: String): this.type
+      def outputDirectory(outputDirectory: String): this.type
+      def outputDirectory(outputDirectory: File): this.type
+      def clean(clean: Boolean): this.type
+      def generate(generate: Boolean): this.type
+      def compile(compile: Boolean): this.type
+      def deleteJniFiles(deleteJniFiles: Boolean): this.type
+      def header(header: Boolean): this.type
+      def copyLibs(copyLibs: Boolean): this.type
+      def copyResources(copyResources: Boolean): this.type
+      def outputName(outputName: String): this.type
+      def jarPrefix(jarPrefix: String): this.type
+      def properties(platform: String): this.type
+      def properties(properties: Properties): this.type
+      def propertyFile(propertyFile: String): this.type
+      def propertyFile(propertyFile: File): this.type
+      def property(keyValue: String): this.type
+      def property(key: String, value: String): this.type
+      def classesOrPackages(classes: Array[String]): this.type
+      def buildCommand(buildCommand: Array[String]): this.type
+      def workingDirectory(workingDirectory: String): this.type
+      def workingDirectory(workingDirectory: File): this.type
+      def environmentVariables(environmentVariables: java.util.Map[String, String]): this.type
+      def compilerOptions(options: Array[String]): this.type
+      def build(): Array[File]
+      def printHelp(): Unit
+      def getClass(): Class[_]
+    }
+
+    val javaCppBuild = TaskKey[Seq[File]]("javaCppBuild", "Build Java CPP products")
+    val javaCppClasses = SettingKey[Seq[String]]("javaCppClasses", "A list of Java CPP classes. Suffix of '.*' ('.**') can be used to match all classes under the specified package (and any subpackages)")
+    val javaCppCustomizer = SettingKey[JavaCppBuilder => JavaCppBuilder]("javaCppCustomization", "Customize the Java CPP builder")
     val javaCppPlatform = SettingKey[Seq[String]]("javaCppPlatform", """The platform that you want to compile for (defaults to the platform of the current computer). You can also set this via the "sbt.javacpp.platform" System Property """)
     val javaCppPresetLibs = SettingKey[Seq[(String, String)]]("javaCppPresetLibs", "List of additional JavaCPP presets that you would wish to bind lazily, defaults to an empty list")
-    val javaCppClasses = SettingKey[Seq[String]]("javaCppClasses", "A list of Java CPP classes. Suffix of '.*' ('.**') can be used to match all classes under the specified package (and any subpackages)")
-    val javaCppBuild = TaskKey[Seq[File]]("javaCppBuild", "Build Java CPP products")
+    val javaCppVersion = SettingKey[String]("javaCppVersion", s"Version of Java CPP that you want to use, defaults to ${Versions.javaCppVersion}")
   }
 
   override def requires: Plugins = plugins.JvmPlugin
@@ -44,7 +80,7 @@ object JavaCppPlugin extends AutoPlugin {
   private def javaCppPresetDependencies: Def.Setting[Seq[ModuleID]] = {
     import autoImport._
     libraryDependencies ++= {
-      lazy val cppPresetVersion = buildPresetVersion(Versions.javaCppVersion)
+      lazy val cppPresetVersion = buildPresetVersion(javaCppVersion.value)
       javaCppPresetLibs.value.flatMap {
         case (libName, libVersion) =>
           val generic = "org.bytedeco.javacpp-presets" % libName % s"$libVersion-$cppPresetVersion" classifier ""
@@ -80,19 +116,23 @@ object JavaCppPlugin extends AutoPlugin {
   private def javaCpp = Def.task {
     import autoImport._
     val classes = javaCppClasses.value
+    val customizer = javaCppCustomizer.value
     val dependencies = (dependencyClasspath in Compile).value
     val output = (classDirectory in Compile).value
     val _ = (compile in Compile).value
 
+    val cl = new URLClassLoader(dependencies.map(_.data.toURI.toURL).toArray, null)
     val thread = Thread.currentThread()
+    thread.setContextClassLoader(cl)
+    val builder = cl.loadClass("org.bytedeco.javacpp.tools.Builder").newInstance().asInstanceOf[JavaCppBuilder]
     val saved = thread.getContextClassLoader
-    thread.setContextClassLoader(classOf[Builder].getClassLoader)
+
     try {
-      new Builder()
-        .classPaths(output.getAbsolutePath)
-        .classPaths(dependencies.map(_.data.absolutePath): _*)
-        .classesOrPackages(classes: _*)
-        .build()
+      customizer(
+        builder
+          .classPaths(output.getAbsolutePath)
+          .classPaths(dependencies.map(_.data.absolutePath).toArray)
+          .classesOrPackages(classes.toArray)).build()
     } finally {
       thread.setContextClassLoader(saved)
     }
